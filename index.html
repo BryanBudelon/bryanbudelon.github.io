@@ -1,7 +1,431 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Responsive eBay → AusPost Formatter</title>
+  
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* --- Base Styles & CSS Variables --- */
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #0ea5e9;
+      --accent-hover: #0284c7;
+      --border: #e5e7eb;
+
+      --bg-dark: #0f172a;
+      --card-dark: #111827;
+      --text-dark: #e5e7eb;
+      --muted-dark: #9ca3af;
+      --border-dark: #1f2937;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      transition: background 0.2s, color 0.2s;
+    }
+    body.dark {
+      --bg: var(--bg-dark);
+      --card: var(--card-dark);
+      --text: var(--text-dark);
+      --muted: var(--muted-dark);
+      --border: var(--border-dark);
+    }
+    
+    /* --- Layout & Components --- */
+    .shell {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px;
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      gap: 16px;
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0;
+      letter-spacing: .2px;
+    }
+    .header-actions { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; }
+
+    /* --- Grid System for Responsiveness --- */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    /* On tablets and phones, stack the cards */
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.04);
+      transition: background 0.2s, border-color 0.2s;
+    }
+    
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      margin: 8px 0 6px;
+    }
+    .inline-label { display: inline-flex; gap: 8px; align-items: center; margin: 0; cursor: pointer; user-select: none; }
+    .inline-label span { font-size: 13px; color: var(--muted); }
+
+    textarea, input {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      font-size: 15px;
+      border-radius: 10px;
+      outline: none;
+      transition: border .2s, box-shadow .2s, background .2s, color .2s;
+    }
+    textarea:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+    textarea { min-height: 170px; resize: vertical; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    .btn, .toggle {
+      border: 1px solid transparent;
+      padding: 10px 14px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .btn.primary { background: var(--accent); color: white; }
+    .btn.primary:hover { background: var(--accent-hover); }
+    .btn.secondary, .toggle { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .btn.secondary:hover, .toggle:hover { background-color: var(--bg); }
+    
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      min-height: 140px;
+    }
+    .hint { font-size: 12px; color: var(--muted); margin: 12px 0 0; }
+  </style>
+</head>
 <body>
-<h1>Hello World</h1>
-<p>I'm hosted with GitHub Pages.</p>
+  
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // --- All parsing logic is moved into its own self-contained hook ---
+    const useAddressParser = (rawText) => {
+      const [parsedFields, setParsedFields] = useState({ name: '', phone: '', street: '', company: '', suburb: '', statePost: '' });
+
+      useEffect(() => {
+        // --- Utilities (kept inside the hook for encapsulation) ---
+        const STATE_AND_ABBR_RE = /\b(?:NSW|New South Wales|QLD|Queensland|VIC|Victoria|WA|Western Australia|SA|South Australia|TAS|Tasmania|ACT|Australian Capital Territory|NT|Northern Territory)\b/i;
+        const STATE_MAP = { 'NEW SOUTH WALES': 'NSW', 'QUEENSLAND': 'QLD', 'VICTORIA': 'VIC', 'WESTERN AUSTRALIA': 'WA', 'SOUTH AUSTRALIA': 'SA', 'TASMANIA': 'TAS', 'AUSTRALIAN CAPITAL TERRITORY': 'ACT', 'NORTHERN TERRITORY': 'NT' };
+        const STREET_TYPE_RE = /\b(?:Street|St|Road|Rd|Avenue|Ave|Lane|Ln|Drive|Dr|Boulevard|Blvd|Circuit|Cct|Close|Cl|Court|Ct|Crescent|Cres|Esplanade|Esp|Highway|Hwy|Parade|Pde|Place|Pl|Square|Sq|Terrace|Tce|Track|Tk|Way)\b/i;
+
+        const normalisePhone = (s) => {
+          if (!s) return "";
+          const digits = s.replace(/[^\d+]/g, "");
+          if (digits.startsWith("+61")) {
+            const rest = digits.replace("+61", "");
+            if (rest.startsWith("4")) return formatAU("0" + rest);
+            return digits;
+          }
+          if (digits.startsWith("04")) return formatAU(digits);
+          return s.replace(/\s+/g, " ").trim();
+        };
+        const formatAU = (num) => {
+          const d = num.replace(/\D/g, "");
+          if (d.length === 10 && d.startsWith("04")) {
+            return d.slice(0, 4) + " " + d.slice(4, 7) + " " + d.slice(7);
+          }
+          return num;
+        };
+        const isPhone = (line) => {
+          const t = line.replace(/\s+/g, "");
+          return /^\+?61?4\d{8}$/.test(t) || /^04\d{8}$/.test(t);
+        };
+        const looksLikeStreet = (line) => (/\b(?:\d+[A-Za-z]?|Unit|Apt|Level|Suite|Rm|Room|Flat|Villa|#)\b/i.test(line) || /^\d+/.test(line)) && STREET_TYPE_RE.test(line);
+        const findSuburbLineIndex = (lines) => {
+          for (let i = lines.length - 1; i >= 0; i--) {
+            if (STATE_AND_ABBR_RE.test(lines[i]) && /\b\d{4}\b/.test(lines[i])) return i;
+          }
+          return -1;
+        };
+        const cleanCountry = (line) => /australia/i.test(line);
+        const isEbayUser = (line) => /^ebay:/i.test(line) || /^\(.*\)$/.test(line);
+
+        // --- Main Parser Function ---
+        const parseEbay = (text) => {
+          const rawLines = text.split("\n").map(l => l.trim()).filter(Boolean);
+          let lines = rawLines.filter(l => !isEbayUser(l) && !cleanCountry(l));
+          let phone = "";
+          for (let i = lines.length - 1; i >= 0; i--) {
+            if (isPhone(lines[i])) { phone = lines[i]; lines.splice(i, 1); break; }
+          }
+          if (lines.length === 0) return { name: "", phone: normalisePhone(phone), street: "", company: "", suburb: "", statePost: "" };
+          const name = lines.shift();
+          const idxSub = findSuburbLineIndex(lines);
+          let suburbLine = "", before = [];
+          if (idxSub > -1) {
+            suburbLine = lines[idxSub];
+            before = lines.slice(0, idxSub);
+          } else {
+            before = lines.slice(0);
+          }
+          let street = "";
+          let companyParts = [];
+          for (const l of before) {
+            if (!street && looksLikeStreet(l)) street = l;
+            else companyParts.push(l);
+          }
+          const company = companyParts.join(", ");
+          if (!street && before.length > 0 && companyParts.length < before.length) {
+            street = before.find(l => !companyParts.includes(l)) || "";
+          } else if (!street && before.length > 0) {
+            street = before[0];
+          }
+          let suburb = "", statePost = "";
+          if (suburbLine) {
+            const pattern = new RegExp(`^(.*?)[,\\s]*(${STATE_AND_ABBR_RE.source})\\s+(\\d{4})\\s*$`, 'i');
+            const m = suburbLine.match(pattern);
+            if (m) {
+              suburb = m[1].trim().replace(/,$/, '').trim();
+              let state = m[2].toUpperCase();
+              const postcode = m[3];
+              state = STATE_MAP[state] || state;
+              statePost = `${state} ${postcode}`;
+            } else {
+              suburb = suburbLine;
+            }
+          }
+          return { name: name || "", phone: normalisePhone(phone), street, company, suburb, statePost };
+        };
+
+        setParsedFields(parseEbay(rawText));
+
+      }, [rawText]); // This effect re-runs only when rawText changes
+
+      return parsedFields;
+    };
+
+
+    // --- UI Components ---
+    const Header = ({ isLive, onLiveChange, isDark, onDarkChange }) => (
+      <header className="header">
+        <h1 className="title">eBay → AusPost Formatter</h1>
+        <div className="header-actions">
+          <label className="inline-label">
+            <input type="checkbox" checked={isLive} onChange={onLiveChange} />
+            <span>Auto-format as you type</span>
+          </label>
+          <button className="toggle" onClick={onDarkChange}>
+            {isDark ? "☀️ Light" : "🌙 Dark"}
+          </button>
+        </div>
+      </header>
+    );
+
+    const AddressInput = ({ rawText, onRawTextChange, onFormat, onClear, onSample }) => (
+      <section className="card">
+        <label htmlFor="raw">Paste eBay Address</label>
+        <textarea 
+          id="raw" 
+          value={rawText}
+          onChange={onRawTextChange}
+          placeholder="Example:&#10;Rhonda Mossel&#10;ebay:tjs86x9&#10;2 Henry St&#10;Bermagui, NSW 2546&#10;Australia&#10;+61 408 201 517"
+        />
+        <div className="btns">
+          <button className="btn primary" onClick={onFormat} type="button">Format</button>
+          <button className="btn secondary" onClick={onClear} type="button">Clear</button>
+          <button className="btn secondary" onClick={onSample} type="button">Use Sample</button>
+        </div>
+        <p className="hint">Tips: We’ll ignore “ebay:username” and “Australia”, convert +61 mobiles to 04…, and uppercase the suburb line.</p>
+      </section>
+    );
+
+    const AddressOutput = ({ fields, onFieldChange, isUpper, onUpperChange, finalOutput, onRebuild, onCopy }) => (
+      <section className="card">
+        <div className="row">
+          <div>
+            <label htmlFor="name">Contact name</label>
+            <input id="name" name="name" value={fields.name} onChange={onFieldChange} placeholder="Full name" />
+          </div>
+          <div>
+            <label htmlFor="phone">Mobile</label>
+            <input id="phone" name="phone" value={fields.phone} onChange={onFieldChange} placeholder="04xx xxx xxx" />
+          </div>
+        </div>
+        <label htmlFor="company">Company / Guesthouse (optional)</label>
+        <input id="company" name="company" value={fields.company} onChange={onFieldChange} placeholder="e.g., Monarchs on Chapman" />
+        <label htmlFor="street">Street (with unit/room if any)</label>
+        <input id="street" name="street" value={fields.street} onChange={onFieldChange} placeholder="e.g., Rm 13 33 Chapman Street" />
+        <div className="row">
+          <div>
+            <label htmlFor="suburb">Suburb</label>
+            <input id="suburb" name="suburb" value={fields.suburb} onChange={onFieldChange} placeholder="BERMAGUI" />
+          </div>
+          <div>
+            <label htmlFor="statePost">State + Postcode</label>
+            <input id="statePost" name="statePost" value={fields.statePost} onChange={onFieldChange} placeholder="NSW 2546" />
+          </div>
+        </div>
+        <div style={{ marginTop: '10px' }}>
+          <label className="inline-label">
+            <input type="checkbox" checked={isUpper} onChange={onUpperChange} />
+            <span>Uppercase suburb/state line</span>
+          </label>
+        </div>
+        <label htmlFor="out" style={{ marginTop: '12px' }}>Final Output (no titles)</label>
+        <textarea id="out" className="mono" value={finalOutput} readOnly />
+        <div className="btns">
+          <button className="btn primary" onClick={onCopy} type="button">Copy Output</button>
+          <button className="btn secondary" onClick={onRebuild} type="button">Rebuild from fields</button>
+        </div>
+      </section>
+    );
+    
+    // --- Main App Component ---
+    const App = () => {
+      // --- State Management ---
+      const [rawText, setRawText] = useState('');
+      const [fields, setFields] = useState({ name: '', phone: '', street: '', company: '', suburb: '', statePost: '' });
+      const [isLiveUpdate, setIsLiveUpdate] = useState(true);
+      const [isUppercase, setIsUppercase] = useState(true);
+      const [isDarkMode, setIsDarkMode] = useState(false);
+
+      // --- Custom hook handles the parsing logic ---
+      const parsedFields = useAddressParser(rawText);
+
+      // Effect for live updates
+      useEffect(() => {
+        if (isLiveUpdate) {
+          setFields({
+            ...parsedFields,
+            suburb: parsedFields.suburb.toUpperCase(),
+            statePost: parsedFields.statePost.toUpperCase()
+          });
+        }
+      }, [parsedFields, isLiveUpdate]);
+      
+      // Effect to toggle dark mode class on the body
+      useEffect(() => {
+        document.body.classList.toggle('dark', isDarkMode);
+      }, [isDarkMode]);
+      
+      // --- Derived State (Final Output) ---
+      const finalOutput = useMemo(() => {
+        const toSuburbLine = (suburb, statePost) => {
+            const txt = `${suburb} ${statePost}`.replace(/\s+/g, " ").trim();
+            return isUppercase ? txt.toUpperCase() : txt;
+        };
+        const lines = [];
+        if (fields.name) lines.push(fields.name);
+        if (fields.phone) lines.push(fields.phone);
+        if (fields.company) lines.push(fields.company);
+        if (fields.street) lines.push(fields.street);
+        const suburbLine = toSuburbLine(fields.suburb, fields.statePost);
+        if (suburbLine) lines.push(suburbLine);
+        return lines.join('\n');
+      }, [fields, isUppercase]);
+
+      // --- Event Handlers ---
+      const handleFieldChange = (e) => {
+        const { name, value } = e.target;
+        setFields(prev => ({ ...prev, [name]: value }));
+      };
+      
+      const handleFormatClick = () => {
+         setFields({
+            ...parsedFields,
+            suburb: parsedFields.suburb.toUpperCase(),
+            statePost: parsedFields.statePost.toUpperCase()
+          });
+      };
+
+      const handleClear = () => {
+        setRawText('');
+        setFields({ name: '', phone: '', street: '', company: '', suburb: '', statePost: '' });
+      };
+
+      const handleSample = () => {
+        setRawText(`Addi Malik\nebay:zkvt9n7\n35 Diosma St\nBellbowrie, Queensland 4070\nAustralia\n+61 403 304 406`);
+      };
+
+      const handleCopyToClipboard = () => {
+        navigator.clipboard.writeText(finalOutput).then(() => {
+          alert("Copied to clipboard!");
+        }).catch(err => {
+          console.error('Failed to copy: ', err);
+        });
+      };
+      
+      // Load sample on initial render
+      useEffect(handleSample, []);
+
+      return (
+        <div className="shell">
+          <Header 
+            isLive={isLiveUpdate} 
+            onLiveChange={() => setIsLiveUpdate(prev => !prev)}
+            isDark={isDarkMode}
+            onDarkChange={() => setIsDarkMode(prev => !prev)}
+          />
+          <main className="grid">
+            <AddressInput 
+              rawText={rawText}
+              onRawTextChange={(e) => setRawText(e.target.value)}
+              onFormat={handleFormatClick}
+              onClear={handleClear}
+              onSample={handleSample}
+            />
+            <AddressOutput 
+              fields={fields}
+              onFieldChange={handleFieldChange}
+              isUpper={isUppercase}
+              onUpperChange={() => setIsUppercase(prev => !prev)}
+              finalOutput={finalOutput}
+              onRebuild={() => { /* Rebuild is implicit now, but button can be kept */ }}
+              onCopy={handleCopyToClipboard}
+            />
+          </main>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+
 </body>
 </html>
